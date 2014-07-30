@@ -20,11 +20,11 @@ import java.util.Set;
 import org.apache.commons.lang.IllegalClassException;
 import org.openhab.binding.knx.config.KNXBindingProvider;
 import org.openhab.binding.knx.config.KNXTypeMapper;
-import org.openhab.binding.knx.internal.connection.KNXConnectionListener;
 import org.openhab.binding.knx.internal.connection.KNXConnection;
-import org.openhab.core.autoupdate.AutoUpdateBindingProvider;
+import org.openhab.binding.knx.internal.connection.KNXConnectionListener;
 import org.openhab.core.binding.AbstractBinding;
 import org.openhab.core.binding.BindingProvider;
+import org.openhab.core.library.types.DateTimeType;
 import org.openhab.core.types.Command;
 import org.openhab.core.types.State;
 import org.openhab.core.types.Type;
@@ -34,8 +34,10 @@ import org.slf4j.LoggerFactory;
 
 import tuwien.auto.calimero.DetachEvent;
 import tuwien.auto.calimero.GroupAddress;
+import tuwien.auto.calimero.IndividualAddress;
 import tuwien.auto.calimero.datapoint.Datapoint;
 import tuwien.auto.calimero.exception.KNXException;
+import tuwien.auto.calimero.exception.KNXFormatException;
 import tuwien.auto.calimero.exception.KNXIllegalArgumentException;
 import tuwien.auto.calimero.process.ProcessCommunicator;
 import tuwien.auto.calimero.process.ProcessEvent;
@@ -188,10 +190,24 @@ public class KNXBinding extends AbstractBinding<KNXBindingProvider>
 	private void readFromKNX(ProcessEvent e) {
 		try {
 			GroupAddress destination = e.getDestination();
+			Object source = e.getSource();
+			IndividualAddress sourceAddr = e.getSourceAddr();
+			
 			byte[] asdu = e.getASDU();
 			if (asdu.length==0) {
 				return;
 			}
+			
+			// first check if we know the source address by item
+			// this is important for location modeling!
+			for (String itemName : getItemNames(new GroupAddress(e.getSourceAddr().toString()))) {
+				
+				DateTimeType newState = new DateTimeType();
+				eventPublisher.postUpdate(itemName, newState);
+				ignoreEventList.add(itemName + newState);
+				logger.trace("Added event (item='{}', type='{}') to the ignore event list", itemName, newState);
+			}
+			
 			for (String itemName : getItemNames(destination)) {
 				Iterable<Datapoint> datapoints = getDatapoints(itemName, destination);
 				if (datapoints != null) {
@@ -218,8 +234,8 @@ public class KNXBinding extends AbstractBinding<KNXBindingProvider>
 				}
 			}
 			logger.debug("Received telegram for unknown group address {}", destination.toString());
-		} catch(RuntimeException re) {
-			logger.error("Error while receiving event from KNX bus: " + re.toString());
+		} catch(RuntimeException | KNXFormatException ex) {
+			logger.error("Error while receiving event from KNX bus: " + ex.toString());
 		}
 	}
 	
